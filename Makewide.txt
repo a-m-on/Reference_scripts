@@ -87,3 +87,51 @@ slimmed_responses %>%
 instead of those long column names we could just join in later.
 
 #I think I like my version better.
+
+
+#transforming long to wide CA table
+
+
+require(tidyverse)
+require(lubridate)
+
+
+LONGCA <- read_csv("CA_032021.csv")
+
+glimpse(LONGCA)
+
+
+# find duplicate cases, list their EST_CA_ID
+LONGCA %>% 
+  add_count(EST_CA_ID, QUESTION_CODE_ID) %>% 
+  filter(n > 1) %>% 
+  pull(EST_CA_ID) %>% unique() -> dupe_records
+
+# filter out dupes  
+LONGCA %>% 
+  filter(!EST_CA_ID %in% dupe_records) %>% 
+  filter(MODULE_NAME_EN != "Intake") %>% 
+  filter(GROUP_DESC != "Mailing Address and Contact Information") %>% 
+  
+  # choosing question - this might be overkill
+  select(EST_CA_ID,
+         EST_CA_CLIENT_ID,
+         EST_CATCHMENT_AREA_ID,
+         CA_STATUS_TYPE_CODE,
+         REFERRED_IND,
+         START_DATE,
+         SUBMIT_DATE,
+         QUESTION_EN,
+         OPTION_EN) %>% 
+  pivot_wider(names_from = c(QUESTION_EN),
+              values_from = OPTION_EN) -> WIDECA
+
+#leads to warning message that there ar e list-cols - is this an issue?"
+#Values are not uniquely identified; output will contain list-cols.
+
+
+#Checking for DUplicate IDs
+WIDECA %>% 
+  add_count(EST_CA_ID) %>% 
+  filter(n > 1) %>% 
+  pull(EST_CA_ID) %>% unique() -> dupe_records_wide
