@@ -1,0 +1,89 @@
+---
+title: "01_makefile"
+author: "Rob Coleman"
+date: "05/08/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(here)
+```
+
+We want this file to take the raw sql output and transform it into a format suitable for analysis and modeling.
+
+1. Run the SQL script and save the output to /data/ca_responses_aug_4_script.csv
+
+- read in the raw data
+```{r}
+ca_response <- read_csv(here("data/ca_responses_aug_4_script.csv"))
+```
+
+- remove tombstone q's
+
+# A tibble: 10 x 2
+   QUESTION_CODE_ID QUESTION_EN       
+   <chr>            <chr>             
+ 1 CA3              Birth date        
+ 2 CA4_4            City              
+ 3 CA4_5            Province or state 
+ 4 CA4_6            Postal or zip code
+ 5 CA4_7            Country           
+ 6 CA5_2            Extension         
+ 7 CA5_3            Alternate phone # 
+ 8 CA5_4            Extension         
+ 9 CA5_5            No telephone      
+10 CA6_2            No e-mail address 
+
+```{r}
+ca_response %>% 
+  # remove cancelled cases (since they can't be referred)
+  filter(CA_STATUS_TYPE_CODE != "CANCELLED") %>% 
+  # remove Mod 2 q's (maybe a query edit)
+  # remove tomebstone Qs (list above)
+  filter(MODULE_CODE == "MOD002" & !(QUESTION_CODE_ID %in% c("CA4_4", "CA4_5", "CA4_6", "CA4_7", "CA3", "CA5_3", "CA6_2", "CA5_2", "CA5_4", "CA5_5"))) %>% 
+  select(EST_CA_ID, CA_STATUS_TYPE_CODE, REFERRED_IND, EST_CATCHMENT_AREA_ID, 
+         SERVICE_DELIVERY_SITE_ID, START_DATE, SUBMIT_DATE, QUESTION_CODE_ID, QUESTION_EN, 
+         PARENT_QUESTION_EN, OPTION_EN, RESPONSE_VALUE, AGE) %>% 
+  # inelegantly solve the problem of 2 different response types
+  # responses are either a reponse_value or an option_en - here we merge them to later pivot
+  mutate(QUESTION_EN = case_when(
+    is.na(QUESTION_EN) ~ PARENT_QUESTION_EN,
+         TRUE ~ QUESTION_EN)) %>% 
+  mutate(OPTION_EN = case_when(
+    is.na(OPTION_EN) ~ RESPONSE_VALUE,
+    TRUE ~ OPTION_EN
+  )) %>% 
+  mutate(QUESTION_EN = case_when(
+    QUESTION_EN == "country" ~ "Where were you born",
+    QUESTION_EN == "DD-MMM-YYYY" ~ "When did you arrive in Canada",
+    TRUE ~ QUESTION_EN
+  )) %>% 
+  filter(!OPTION_EN %in% c("Another race category (specify):", "Another gender identity (specify)", "null")) %>% 
+  select(-PARENT_QUESTION_EN, -RESPONSE_VALUE, -AGE) -> slimmed_responses
+```
+
+some responses options can be answered more than once.  i don't have an elegant way to handle those cases, so for now let's remove them while we think of a better solution
+
+```{r}
+# find duplicate cases, list their EST_CA_ID
+slimmed_responses %>% 
+  add_count(EST_CA_ID, QUESTION_CODE_ID) %>% 
+  filter(n > 1) %>% 
+  pull(EST_CA_ID) %>% unique() -> dupe_records
+# filter out dupes  
+slimmed_responses %>% 
+  filter(!EST_CA_ID %in% dupe_records) %>% 
+  # combining code and question - this might be overkill
+  select(-QUESTION_EN) %>% 
+  pivot_wider(names_from = c(QUESTION_CODE_ID),
+              values_from = OPTION_EN) %>% 
+  saveRDS(here("data/wide_aug5_deduped_aug10.RDS"))
+```
+
+instead of those long column names we could just join in later.
+
+#I think I like my version better.
